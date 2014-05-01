@@ -1,356 +1,297 @@
 var editor = (function() {
 
-	// Editor elements
-	var headerField, contentField, cleanSlate, lastType, currentNodeList, savedSelection;
+  // Editor elements
+  var headerField, contentField, cleanSlate, lastType, currentNodeList, savedSelection;
 
-	// Editor Bubble elements
-	var textOptions, optionsBox, boldButton, italicButton, quoteButton, urlButton, urlInput;
+  // Editor Bubble elements
+  var textOptions, optionsBox, urlButton, urlInput;
 
-	var composing;
+  var composing;
 
-	function init() {
+  function init() {
 
-		composing = false;
-		bindElements();
+    composing = false;
+    bindElements();
 
-		// Set cursor position
-		var range = document.createRange();
-		var selection = window.getSelection();
-		range.setStart(headerField, 1);
-		selection.removeAllRanges();
-		selection.addRange(range);
+    // Set cursor position
+    var range = document.createRange();
+    var selection = window.getSelection();
+    range.setStart(headerField, 1);
+    selection.removeAllRanges();
+    selection.addRange(range);
 
-		createEventBindings();
+    createEventBindings();
 
-		// Load state if storage is supported
-		if ( supportsHtmlStorage() ) {
-			loadState();
-		}
-	}
+    // Load state if storage is supported
+    if ( supportsHtmlStorage() ) {
+      loadState();
+    }
+  }
 
-	function createEventBindings() {
+  function createEventBindings() {
 
-		// Key up bindings
-		if ( supportsHtmlStorage() ) {
+    // Key up bindings
+    if ( supportsHtmlStorage() ) {
 
-			document.onkeyup = function( event ) {
-				checkTextHighlighting( event );
-				saveState();
-			}
+      document.onkeyup = function( event ) {
+        checkTextHighlighting( event );
+        saveState();
+      }
 
-		} else {
-			document.onkeyup = checkTextHighlighting;
-		}
+    } else {
+      document.onkeyup = checkTextHighlighting;
+    }
 
-		// Mouse bindings
-		document.onmousedown = checkTextHighlighting;
-		document.onmouseup = function( event ) {
+    // Mouse bindings
+    document.onmousedown = checkTextHighlighting;
+    document.onmouseup = function( event ) {
 
-			setTimeout( function() {
-				checkTextHighlighting( event );
-			}, 1);
-		};
-		
-		// Window bindings
-		window.addEventListener( 'resize', function( event ) {
-			updateBubblePosition();
-		});
+      setTimeout( function() {
+        checkTextHighlighting( event );
+      }, 1);
+    };
 
+    // Window bindings
+    window.addEventListener( 'resize', function( event ) {
+      updateBubblePosition();
+    });
 
-		document.body.addEventListener( 'scroll', function() {
 
-			// TODO: Debounce update bubble position to stop excessive redraws
-			updateBubblePosition();
-		});
+    document.body.addEventListener( 'scroll', function() {
 
-		// Composition bindings. We need them to distinguish
-		// IME composition from text selection
-		document.addEventListener( 'compositionstart', onCompositionStart );
-		document.addEventListener( 'compositionend', onCompositionEnd );
-	}
+      // TODO: Debounce update bubble position to stop excessive redraws
+      updateBubblePosition();
+    });
 
-	function bindElements() {
+    // Composition bindings. We need them to distinguish
+    // IME composition from text selection
+    document.addEventListener( 'compositionstart', onCompositionStart );
+    document.addEventListener( 'compositionend', onCompositionEnd );
+  }
 
-		headerField = document.querySelector( '.header' );
-		contentField = document.querySelector( '.content' );
-		textOptions = document.querySelector( '.text-options' );
+  function bindElements() {
 
-		optionsBox = textOptions.querySelector( '.options' );
+    headerField = document.querySelector( '.header' );
+    contentField = document.querySelector( '.content' );
+    textOptions = document.querySelector( '.text-options' );
 
-		boldButton = textOptions.querySelector( '.bold' );
-		boldButton.onclick = onBoldClick;
+    optionsBox = textOptions.querySelector( '.options' );
 
-		italicButton = textOptions.querySelector( '.italic' );
-		italicButton.onclick = onItalicClick;
+    urlButton = textOptions.querySelector( '.url' );
+    urlButton.onmousedown = onUrlClick;
 
-		quoteButton = textOptions.querySelector( '.quote' );
-		quoteButton.onclick = onQuoteClick;
+    urlInput = textOptions.querySelector( '.url-input' );
+    urlInput.onblur = onUrlInputBlur;
+    urlInput.onkeydown = onUrlInputKeyDown;
+  }
 
-		urlButton = textOptions.querySelector( '.url' );
-		urlButton.onmousedown = onUrlClick;
+  function checkTextHighlighting( event ) {
 
-		urlInput = textOptions.querySelector( '.url-input' );
-		urlInput.onblur = onUrlInputBlur;
-		urlInput.onkeydown = onUrlInputKeyDown;
-	}
+    var selection = window.getSelection();
 
-	function checkTextHighlighting( event ) {
 
-		var selection = window.getSelection();
+    if ( (event.target.className === "url-input" ||
+          event.target.classList.contains( "url" ) ||
+          event.target.parentNode.classList.contains( "ui-inputs")) ) {
 
+            currentNodeList = findNodes( selection.focusNode );
+            updateBubbleStates();
+            return;
+          }
 
-		if ( (event.target.className === "url-input" ||
-		     event.target.classList.contains( "url" ) ||
-		     event.target.parentNode.classList.contains( "ui-inputs")) ) {
-
-			currentNodeList = findNodes( selection.focusNode );
-			updateBubbleStates();
-			return;
-		}
-
-		// Check selections exist
-		if ( selection.isCollapsed === true && lastType === false ) {
-
-			onSelectorBlur();
-		}
-
-		// Text is selected
-		if ( selection.isCollapsed === false && composing === false ) {
+    // Check selections exist
+    if ( selection.isCollapsed === true && lastType === false ) {
 
-			currentNodeList = findNodes( selection.focusNode );
-
-			// Find if highlighting is in the editable area
-			if ( hasNode( currentNodeList, "ARTICLE") ) {
-				updateBubbleStates();
-				updateBubblePosition();
+      onSelectorBlur();
+    }
 
-				// Show the ui bubble
-				textOptions.className = "text-options active";
-			}
-		}
+    // Text is selected
+    if ( selection.isCollapsed === false && composing === false ) {
 
-		lastType = selection.isCollapsed;
-	}
-	
-	function updateBubblePosition() {
-		var selection = window.getSelection();
-		var range = selection.getRangeAt(0);
-		var boundary = range.getBoundingClientRect();
-		
-		textOptions.style.top = boundary.top - 5 + window.pageYOffset + "px";
-		textOptions.style.left = (boundary.left + boundary.right)/2 + "px";
-	}
+      currentNodeList = findNodes( selection.focusNode );
 
-	function updateBubbleStates() {
+      // Find if highlighting is in the editable area
+      if ( hasNode( currentNodeList, "ARTICLE") ) {
+        updateBubbleStates();
+        updateBubblePosition();
 
-		// It would be possible to use classList here, but I feel that the
-		// browser support isn't quite there, and this functionality doesn't
-		// warrent a shim.
+        // Do onUrlClick stuff so this works.
+        onUrlClick();
 
-		if ( hasNode( currentNodeList, 'B') ) {
-			boldButton.className = "bold active"
-		} else {
-			boldButton.className = "bold"
-		}
+        // Show the ui bubble
+        textOptions.className = "text-options active";
+      }
+    }
 
-		if ( hasNode( currentNodeList, 'I') ) {
-			italicButton.className = "italic active"
-		} else {
-			italicButton.className = "italic"
-		}
+    lastType = selection.isCollapsed;
+  }
 
-		if ( hasNode( currentNodeList, 'BLOCKQUOTE') ) {
-			quoteButton.className = "quote active"
-		} else {
-			quoteButton.className = "quote"
-		}
+  function updateBubblePosition() {
+    var selection = window.getSelection();
+    var range = selection.getRangeAt(0);
+    var boundary = range.getBoundingClientRect();
 
-		if ( hasNode( currentNodeList, 'A') ) {
-			urlButton.className = "url useicons active"
-		} else {
-			urlButton.className = "url useicons"
-		}
-	}
+    textOptions.style.top = boundary.top - 5 + window.pageYOffset + "px";
+    textOptions.style.left = (boundary.left + boundary.right)/2 + "px";
+  }
 
-	function onSelectorBlur() {
+  function updateBubbleStates() {
+    if ( hasNode( currentNodeList, 'A') ) {
+      urlButton.className = "url useicons active"
+    } else {
+      urlButton.className = "url useicons"
+    }
+  }
 
-		textOptions.className = "text-options fade";
-		setTimeout( function() {
+  function onSelectorBlur() {
 
-			if (textOptions.className == "text-options fade") {
+    textOptions.className = "text-options fade";
+    setTimeout( function() {
 
-				textOptions.className = "text-options";
-				textOptions.style.top = '-999px';
-				textOptions.style.left = '-999px';
-			}
-		}, 260 )
-	}
+      if (textOptions.className == "text-options fade") {
 
-	function findNodes( element ) {
+        textOptions.className = "text-options";
+        textOptions.style.top = '-999px';
+        textOptions.style.left = '-999px';
+      }
+    }, 260 )
+  }
 
-		var nodeNames = {};
+  function findNodes( element ) {
 
-		// Internal node?
-		var selection = window.getSelection();
+    var nodeNames = {};
 
-		// if( selection.containsNode( document.querySelector('b'), false ) ) {
-		// 	nodeNames[ 'B' ] = true;
-		// }
+    // Internal node?
+    var selection = window.getSelection();
 
-		while ( element.parentNode ) {
+    // if( selection.containsNode( document.querySelector('b'), false ) ) {
+    // 	nodeNames[ 'B' ] = true;
+    // }
 
-			nodeNames[element.nodeName] = true;
-			element = element.parentNode;
+    while ( element.parentNode ) {
 
-			if ( element.nodeName === 'A' ) {
-				nodeNames.url = element.href;
-			}
-		}
+      nodeNames[element.nodeName] = true;
+      element = element.parentNode;
 
-		return nodeNames;
-	}
+      if ( element.nodeName === 'A' ) {
+        nodeNames.url = element.href;
+      }
+    }
 
-	function hasNode( nodeList, name ) {
+    return nodeNames;
+  }
 
-		return !!nodeList[ name ];
-	}
+  function hasNode( nodeList, name ) {
 
-	function saveState( event ) {
-		
-		localStorage[ 'header' ] = headerField.innerHTML;
-		localStorage[ 'content' ] = contentField.innerHTML;
-	}
+    return !!nodeList[ name ];
+  }
 
-	function loadState() {
+  function saveState( event ) {
 
-		if ( localStorage[ 'header' ] ) {
-			headerField.innerHTML = localStorage[ 'header' ];
-		}
+    localStorage[ 'header' ] = headerField.innerHTML;
+    localStorage[ 'content' ] = contentField.innerHTML;
+  }
 
-		if ( localStorage[ 'content' ] ) {
-			contentField.innerHTML = localStorage[ 'content' ];
-		}
-	}
+  function loadState() {
 
-	function onBoldClick() {
-		document.execCommand( 'bold', false );
-	}
+    if ( localStorage[ 'header' ] ) {
+      headerField.innerHTML = localStorage[ 'header' ];
+    }
 
-	function onItalicClick() {
-		document.execCommand( 'italic', false );
-	}
+    if ( localStorage[ 'content' ] ) {
+      contentField.innerHTML = localStorage[ 'content' ];
+    }
+  }
 
-	function onQuoteClick() {
+  function onUrlClick() {
 
-		var nodeNames = findNodes( window.getSelection().focusNode );
+      // Set timeout here to debounce the focus action
+      setTimeout( function() {
 
-		if ( hasNode( nodeNames, 'BLOCKQUOTE' ) ) {
-			document.execCommand( 'formatBlock', false, 'p' );
-			document.execCommand( 'outdent' );
-		} else {
-			document.execCommand( 'formatBlock', false, 'blockquote' );
-		}
-	}
+        var nodeNames = findNodes( window.getSelection().focusNode );
 
-	function onUrlClick() {
+        if ( hasNode( nodeNames , "A" ) ) {
+          urlInput.value = nodeNames.url;
+        } else {
+          // Symbolize text turning into a link, which is temporary, and will never be seen.
+          document.execCommand( 'createLink', false, '/' );
+        }
 
-		if ( optionsBox.className == 'options' ) {
+        // Since typing in the input box kills the highlighted text we need
+        // to save this selection, to add the url link if it is provided.
+        lastSelection = window.getSelection().getRangeAt(0);
+        lastType = false;
 
-			optionsBox.className = 'options url-mode';
+        urlInput.focus();
 
-			// Set timeout here to debounce the focus action
-			setTimeout( function() {
+      }, 100);
+  }
 
-				var nodeNames = findNodes( window.getSelection().focusNode );
+  function onUrlInputKeyDown( event ) {
 
-				if ( hasNode( nodeNames , "A" ) ) {
-					urlInput.value = nodeNames.url;
-				} else {
-					// Symbolize text turning into a link, which is temporary, and will never be seen.
-					document.execCommand( 'createLink', false, '/' );
-				}
+    if ( event.keyCode === 13 ) {
+      event.preventDefault();
+      applyURL( urlInput.value );
+      urlInput.blur();
+    }
+  }
 
-				// Since typing in the input box kills the highlighted text we need
-				// to save this selection, to add the url link if it is provided.
-				lastSelection = window.getSelection().getRangeAt(0);
-				lastType = false;
+  function onUrlInputBlur( event ) {
 
-				urlInput.focus();
+    //optionsBox.className = 'options';
+    applyURL( urlInput.value );
+    urlInput.value = '';
+    currentNodeList = findNodes( window.getSelection().focusNode );
+    updateBubbleStates();
+  }
 
-			}, 100);
+  function applyURL( url ) {
 
-		} else {
+    //rehighlightLastSelection();
 
-			optionsBox.className = 'options';
-		}
-	}
+    // Unlink any current links
+    document.execCommand( 'unlink', false );
 
-	function onUrlInputKeyDown( event ) {
+    if (url !== "") {
 
-		if ( event.keyCode === 13 ) {
-			event.preventDefault();
-			applyURL( urlInput.value );
-			urlInput.blur();
-		}
-	}
+      // Insert HTTP if it doesn't exist.
+      if ( !url.match("^(http|https)://") ) {
 
-	function onUrlInputBlur( event ) {
+        //url = "http://" + url;	
+      } 
 
-		optionsBox.className = 'options';
-		applyURL( urlInput.value );
-		urlInput.value = '';
+      document.execCommand( 'createLink', false, url );
+    }
+  }
 
-		currentNodeList = findNodes( window.getSelection().focusNode );
-		updateBubbleStates();
-	}
+  function rehighlightLastSelection() {
 
-	function applyURL( url ) {
+    window.getSelection().addRange( lastSelection );
+  }
 
-		rehighlightLastSelection();
+  function getWordCount() {
 
-		// Unlink any current links
-		document.execCommand( 'unlink', false );
+    var text = get_text( contentField );
 
-		if (url !== "") {
-		
-			// Insert HTTP if it doesn't exist.
-			if ( !url.match("^(http|https)://") ) {
+    if ( text === "" ) {
+      return 0
+    } else {
+      return text.split(/\s+/).length;
+    }
+  }
 
-				url = "http://" + url;	
-			} 
+  function onCompositionStart ( event ) {
+    composing = true;
+  }
 
-			document.execCommand( 'createLink', false, url );
-		}
-	}
+  function onCompositionEnd (event) {
+    composing = false;
+  }
 
-	function rehighlightLastSelection() {
-
-		window.getSelection().addRange( lastSelection );
-	}
-
-	function getWordCount() {
-		
-		var text = get_text( contentField );
-
-		if ( text === "" ) {
-			return 0
-		} else {
-			return text.split(/\s+/).length;
-		}
-	}
-
-	function onCompositionStart ( event ) {
-		composing = true;
-	}
-
-	function onCompositionEnd (event) {
-		composing = false;
-	}
-
-	return {
-		init: init,
-		saveState: saveState,
-		getWordCount: getWordCount
-	}
+  return {
+    init: init,
+    saveState: saveState,
+    getWordCount: getWordCount
+  }
 
 })();
